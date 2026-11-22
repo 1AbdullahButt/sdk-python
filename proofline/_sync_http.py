@@ -109,12 +109,22 @@ class NetworkBackend(httpcore2.SyncBackend):
         local_address: str | None = None,
         socket_options: Iterable[Any] | None = None,
     ) -> httpcore2.NetworkStream:
+        # One budget covers the lookup and every address. Each attempt gets an equal share
+        # of the time still left, so an address that never answers cannot spend the time
+        # of those after it; unused time carries over, and the last gets all that remains.
+        budget = bounded_timeout(timeout)
+        end = None if budget is None else monotonic() + budget
+        addresses = resolve(host, port, budget)
         failure: httpcore2.ConnectError | httpcore2.ConnectTimeout | None = None
-        for address in resolve(host, port, bounded_timeout(timeout)):
+        for position, address in enumerate(addresses):
+            share: float | None = None
+            if end is not None:
+                left = end - monotonic()
+                if left <= 0:
+                    raise httpcore2.ConnectTimeout("The connection did not finish in time.")
+                share = left / (len(addresses) - position)
             try:
-                stream = super().connect_tcp(
-                    address, port, bounded_timeout(timeout), local_address, socket_options
-                )
+                stream = super().connect_tcp(address, port, share, local_address, socket_options)
             except (httpcore2.ConnectError, httpcore2.ConnectTimeout) as error:
                 failure = error
             else:
