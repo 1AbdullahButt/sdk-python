@@ -113,6 +113,7 @@ def test_without_a_request_deadline_the_connect_timeout_bounds_all_addresses(
     network = Network(monkeypatch, SILENT)
     with network.deadline(None), pytest.raises(httpcore2.ConnectTimeout):
         network.connect(30)
+    assert network.lookups == [30]
     shares = [timeout for _, timeout in network.attempts]
     assert shares == [7.5, 7.5, 7.5, 7.5]
     assert sum(share or 0 for share in shares) <= 30
