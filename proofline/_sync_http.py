@@ -23,11 +23,11 @@ import httpx2
 IO_DEADLINE: ContextVar[float | None] = ContextVar("proofline_io_deadline", default=None)
 
 
-def bounded_timeout(timeout: float | None) -> float | None:
+def bounded_timeout(timeout: float | None, now: float | None = None) -> float | None:
     deadline = IO_DEADLINE.get()
     if deadline is None:
         return timeout
-    remaining = deadline - monotonic()
+    remaining = deadline - (monotonic() if now is None else now)
     if remaining <= 0:
         raise httpcore2.ReadTimeout("The request deadline expired.")
     return remaining if timeout is None else min(timeout, remaining)
@@ -112,8 +112,11 @@ class NetworkBackend(httpcore2.SyncBackend):
         # One budget covers the lookup and every address. Each attempt gets an equal share
         # of the time still left, so an address that never answers cannot spend the time
         # of those after it; unused time carries over, and the last gets all that remains.
-        budget = bounded_timeout(timeout)
-        end = None if budget is None else monotonic() + budget
+        # The budget and its end come from one clock reading, so the end is never later
+        # than the request deadline.
+        now = monotonic()
+        budget = bounded_timeout(timeout, now)
+        end = None if budget is None else now + budget
         addresses = resolve(host, port, budget)
         failure: httpcore2.ConnectError | httpcore2.ConnectTimeout | None = None
         for position, address in enumerate(addresses):
