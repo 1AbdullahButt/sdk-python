@@ -117,6 +117,29 @@ def test_without_a_request_deadline_the_connect_timeout_bounds_all_addresses(
     assert network.now - 100.0 <= 30
 
 
+def test_time_between_clock_reads_does_not_move_the_request_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The clock moves on right after its first reading (here by 1 s, in practice by
+    # microseconds). The attempt must still end at the request deadline, not after it.
+    network = Network(monkeypatch, [SILENT[0]])
+    readings = 0
+
+    def monotonic() -> float:
+        nonlocal readings
+        readings += 1
+        now = network.now
+        if readings == 1:
+            network.now += 1
+        return now
+
+    monkeypatch.setattr(_sync_http, "monotonic", monotonic)
+    with network.deadline(30), pytest.raises(httpcore2.ConnectTimeout):
+        network.connect(60)
+    assert network.attempts == [(SILENT[0], 29.0)]
+    assert network.now == 130.0
+
+
 def test_the_lookup_and_the_attempts_share_one_connect_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
