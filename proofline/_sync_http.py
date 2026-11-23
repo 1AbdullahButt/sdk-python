@@ -23,11 +23,11 @@ import httpx2
 IO_DEADLINE: ContextVar[float | None] = ContextVar("proofline_io_deadline", default=None)
 
 
-def bounded_timeout(timeout: float | None) -> float | None:
+def bounded_timeout(timeout: float | None, now: float | None = None) -> float | None:
     deadline = IO_DEADLINE.get()
     if deadline is None:
         return timeout
-    remaining = deadline - monotonic()
+    remaining = deadline - (monotonic() if now is None else now)
     if remaining <= 0:
         raise httpcore2.ReadTimeout("The request deadline expired.")
     return remaining if timeout is None else min(timeout, remaining)
@@ -109,12 +109,27 @@ class NetworkBackend(httpcore2.SyncBackend):
         local_address: str | None = None,
         socket_options: Iterable[Any] | None = None,
     ) -> httpcore2.NetworkStream:
+        # The lookup may wait the whole budget, and the addresses share what it leaves before
+        # the end. Each attempt gets an equal share of the time still left, so an address that
+        # never answers cannot spend the time of those after it; unused time carries over, and
+        # the last gets all that remains. The budget and the end come from one clock reading,
+        # so the end is never later than the request deadline. resolve() starts its wait once
+        # its worker thread is running, so a lookup that times out can pass the end by that
+        # start-up time; no address is tried after the end.
+        now = monotonic()
+        budget = bounded_timeout(timeout, now)
+        end = None if budget is None else now + budget
+        addresses = resolve(host, port, budget)
         failure: httpcore2.ConnectError | httpcore2.ConnectTimeout | None = None
-        for address in resolve(host, port, bounded_timeout(timeout)):
+        for position, address in enumerate(addresses):
+            share: float | None = None
+            if end is not None:
+                left = end - monotonic()
+                if left <= 0:
+                    raise httpcore2.ConnectTimeout("The connection did not finish in time.")
+                share = left / (len(addresses) - position)
             try:
-                stream = super().connect_tcp(
-                    address, port, bounded_timeout(timeout), local_address, socket_options
-                )
+                stream = super().connect_tcp(address, port, share, local_address, socket_options)
             except (httpcore2.ConnectError, httpcore2.ConnectTimeout) as error:
                 failure = error
             else:
