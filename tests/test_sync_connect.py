@@ -36,9 +36,11 @@ class Network:
     ) -> None:
         self.now = 100.0
         self.attempts: list[tuple[str, float | None]] = []
+        self.lookups: list[float | None] = []
         resolved = list(addresses)
 
         def resolve(host: str, port: int, timeout: float | None) -> list[str]:
+            self.lookups.append(timeout)
             self.now += lookup_seconds
             return resolved
 
@@ -147,6 +149,7 @@ def test_the_lookup_and_the_attempts_share_one_connect_timeout(
     with network.deadline(None):
         stream = network.connect(30)
     assert stream.get_extra_info("server_addr") == HEALTHY[0]
+    assert network.lookups == [30]
     assert network.attempts == [(SILENT[0], 12.0), (HEALTHY[0], 12.0)]
     assert network.now - 100.0 <= 30
 
@@ -157,6 +160,7 @@ def test_a_lookup_that_uses_the_whole_timeout_leaves_no_attempt(
     network = Network(monkeypatch, [HEALTHY[0]], lookup_seconds=30)
     with network.deadline(None), pytest.raises(httpcore2.ConnectTimeout):
         network.connect(30)
+    assert network.lookups == [30]
     assert network.attempts == []
 
 
@@ -178,6 +182,7 @@ def test_a_single_address_keeps_the_whole_budget(
     network = Network(monkeypatch, [HEALTHY[0]])
     with network.deadline(deadline):
         network.connect(timeout)
+    assert network.lookups == [expected]
     assert network.attempts == [(HEALTHY[0], expected)]
 
 
