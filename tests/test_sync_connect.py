@@ -192,4 +192,5 @@ def test_no_timeout_and_no_deadline_stay_unbounded(monkeypatch: pytest.MonkeyPat
     with network.deadline(None):
         stream = network.connect(None)
     assert stream.get_extra_info("server_addr") == HEALTHY[0]
+    assert network.lookups == [None]
     assert network.attempts == [(REFUSED, None), (HEALTHY[0], None)]
