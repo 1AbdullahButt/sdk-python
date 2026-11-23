@@ -109,11 +109,13 @@ class NetworkBackend(httpcore2.SyncBackend):
         local_address: str | None = None,
         socket_options: Iterable[Any] | None = None,
     ) -> httpcore2.NetworkStream:
-        # One budget covers the lookup and every address. Each attempt gets an equal share
-        # of the time still left, so an address that never answers cannot spend the time
-        # of those after it; unused time carries over, and the last gets all that remains.
-        # The budget and its end come from one clock reading, so the end is never later
-        # than the request deadline.
+        # The lookup may wait the whole budget, and the addresses share what it leaves before
+        # the end. Each attempt gets an equal share of the time still left, so an address that
+        # never answers cannot spend the time of those after it; unused time carries over, and
+        # the last gets all that remains. The budget and the end come from one clock reading,
+        # so the end is never later than the request deadline. resolve() starts its wait once
+        # its worker thread is running, so a lookup that times out can pass the end by that
+        # start-up time; no address is tried after the end.
         now = monotonic()
         budget = bounded_timeout(timeout, now)
         end = None if budget is None else now + budget
